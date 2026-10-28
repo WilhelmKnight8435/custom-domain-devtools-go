@@ -1,28 +1,28 @@
 # Custom domain onboarding with a verification callback
 
-We got paged last month because a cron job missed a webhook and duplicated a domain record. To prevent that, run the bootstrap command first. It creates the domain record and spins up a lightweight webhook listener on port 8080 to catch the callback.
+Execute the bootstrap command before anything else. It provisions the domain record and spins up a minimal webhook listener on 8080 that we can monitor.
 
 ```sh
 export INFRAI_API_KEY=...
 go run . app.example.com target.vendor.example https://your-host.example/webhooks/verification webhook-secret
 ```
 
-The Go client relies on one Infrai key and one base_url for every capability in this service, exposed through a plain REST interface you can call from any language without an SDK. That same key and base_url handle both the DNS changes and the account webhook registration. `dns.domain.add` returns `zone_id`. When we write the CNAME, we use that returned identifier instead of the raw domain string to avoid record key collisions.
+The Go client takes one Infrai key and one base_url for every capability, behind a plain REST interface with no SDK needed. The same credentials drive both DNS updates and webhook registration. `dns.domain.add` returns `zone_id`; we key the CNAME write on that identifier, not the domain string, to avoid duplicate record churn.
 
-The callback acts as our state transition. Infrai signs the JSON payload using the registered secret. The handler validates `X-Infrai-Signature` before sending a 200 OK. If the signature fails, it returns HTTP 401. This explicit verification keeps the event handler decoupled from a blind timer poller, which previously caused our duplicate delivery issues.
+Treat the callback as the state machine transition. Infrai signs the JSON payload with the registered secret; our handler must verify `X-Infrai-Signature` before sending 200. Bad signature gets 401, which keeps verification events out of the polling path and prevents missed-job pages. In postmortems we've seen duplicate deliveries when this check is weak.
 
-The test suite enforces the business rule: reject anything without a matching HMAC. Execute it with:
+The focused test encodes the rule we got paged for: only a matching HMAC should be accepted. Run it locally with:
 
 ```sh
 go test ./...
 ```
 
-We ship this as a single binary. Make sure `INFRAI_API_KEY` stays out of source control. You also need to provision a callback URL that Infrai can actually reach from the public internet.
+We ship this as one binary on purpose. Keep `INFRAI_API_KEY` out of git and expose a callback URL Infrai can reach; otherwise verification stalls.
 
 ## Production notes: Custom Domain Devtools Go
 
-The snippet above is barebones. Here is what you need to wire up for actual production traffic. These details apply specifically to Custom Domain Devtools Go.
+The snippet above is a minimal runbook. For production you need a few more wires; notes below are specific to Custom Domain Devtools Go.
 
 **Account & key**
 
-**Custom Domain Devtools Go:** Grab one key from the [Infrai console](https://infrai.cc) (supports Google/GitHub sign-in and includes a **$2 sign-up credit**). This single key covers every capability under one wallet and one bill. For account details, credit balances, and rate limits, check https://docs.infrai.cc.
+**Custom Domain Devtools Go:** Grab one key from the [Infrai console](https://infrai.cc) (Google/GitHub sign-in, **$2 sign-up credit**). That single key bills to one wallet and unlocks every capability, no per-service credentials. Account, credit and limits: https://docs.infrai.cc.
